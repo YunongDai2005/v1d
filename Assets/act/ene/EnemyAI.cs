@@ -21,11 +21,13 @@ public class EnemyAI : MonoBehaviour
     private Rigidbody rb;
     private bool isDashing = false;
     private bool isCoolingDown = false;
+    private RigidbodyConstraints initialConstraints;
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
         rb.useGravity = false;
+        initialConstraints = rb.constraints; // 记录初始约束，便于冲刺结束后还原
 
         // 自动寻找玩家
         if (player == null)
@@ -40,6 +42,11 @@ public class EnemyAI : MonoBehaviour
 
     void FixedUpdate()
     {
+        // 冲刺时锁定旋转，避免碰撞导致旋转；非冲刺还原
+        rb.constraints = isDashing ? (initialConstraints | RigidbodyConstraints.FreezeRotation)
+                                   : initialConstraints;
+        if (isDashing) rb.angularVelocity = Vector3.zero;
+
         if (player == null || isDashing || isCoolingDown) return;
 
         float distance = Vector3.Distance(transform.position, player.position);
@@ -104,7 +111,7 @@ public class EnemyAI : MonoBehaviour
         if (other.CompareTag("Player"))
         {
             // 碰到玩家 → 可以在这里加伤害逻辑
-            Destroy(gameObject);
+           //Destroy(gameObject);
         }
     }
 }
