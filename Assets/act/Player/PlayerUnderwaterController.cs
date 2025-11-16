@@ -57,16 +57,28 @@ public class PlayerUnderwaterController : MonoBehaviour
     public Vector2 inputDir;
     public float verticalSpeed;
 
+    private Vector2 rawInputDir;
     private Rigidbody rb;
     private Vector3 targetVelocity;
     private Vector3 smoothVelocity;
 
     // 冲刺状态
     private bool isDashing = false;
-    private bool dashIsVertical = false;
     private float dashTimer = 0f;
+    private float currentDashDuration = 0f;
     private float dashCooldownTimer = 0f;
-    private Vector3 dashDirection;
+    private bool dashHasHorizontalInput = false;
+    private bool dashHasVerticalInput = false;
+
+    private enum DashOrientation
+    {
+        None,
+        Horizontal,
+        Vertical,
+        Diagonal
+    }
+
+    private DashOrientation dashOrientation = DashOrientation.None;
 
     void Start()
     {
@@ -94,7 +106,8 @@ public class PlayerUnderwaterController : MonoBehaviour
 
         float moveX = Input.GetAxisRaw("Horizontal");
         float moveY = Input.GetAxisRaw("Vertical");
-        inputDir = new Vector2(moveX, moveY).normalized;
+        rawInputDir = new Vector2(moveX, moveY);
+        inputDir = rawInputDir.normalized;
 
         float vx = inputDir.x * maxSpeedX;
         float vy = 0f;
@@ -148,35 +161,66 @@ public class PlayerUnderwaterController : MonoBehaviour
         // 检测空格冲刺输入
         if (Input.GetKeyDown(KeyCode.Space) && !isDashing && dashCooldownTimer <= 0f)
         {
-            StartDash();
+            if (rawInputDir.sqrMagnitude > 0.01f)
+                StartDash(rawInputDir);
         }
     }
 
-    void StartDash()
+    void StartDash(Vector2 dashInputRaw)
     {
         isDashing = true;
 
-        // 根据输入方向区分 WS / AD
-        if (Mathf.Abs(inputDir.y) > Mathf.Abs(inputDir.x))
-            dashIsVertical = true;
-        else
-            dashIsVertical = false;
+        bool hasHorizontal = Mathf.Abs(dashInputRaw.x) > 0.01f;
+        bool hasVertical = Mathf.Abs(dashInputRaw.y) > 0.01f;
 
-        float dashForce = dashIsVertical ? dashForceY : dashForceX;
-        float dashDuration = dashIsVertical ? dashDurationY : dashDurationX;
-        float dashCooldown = dashIsVertical ? dashCooldownY : dashCooldownX;
+        // 如果仍然没有有效输入，则按面对方向进行水平冲刺
+        if (!hasHorizontal && !hasVertical)
+        {
+            dashOrientation = DashOrientation.Horizontal;
+            dashHasHorizontalInput = true;
+            dashHasVerticalInput = false;
+            dashTimer = dashDurationX;
+            currentDashDuration = dashDurationX;
+            dashCooldownTimer = dashCooldownX;
+            Vector3 fallbackDir = transform.right * (transform.rotation.eulerAngles.y == 180 ? -1f : 1f);
+            rb.linearVelocity += fallbackDir * dashForceX;
+            SpawnDashEffect();
+            return;
+        }
+
+        dashHasHorizontalInput = hasHorizontal;
+        dashHasVerticalInput = hasVertical;
+        dashOrientation = hasHorizontal && hasVertical
+            ? DashOrientation.Diagonal
+            : (hasVertical ? DashOrientation.Vertical : DashOrientation.Horizontal);
+
+        float dashDuration = 0f;
+        float dashCooldown = 0f;
+        Vector3 dashImpulse = Vector3.zero;
+
+        if (hasHorizontal)
+        {
+            dashDuration = Mathf.Max(dashDuration, dashDurationX);
+            dashCooldown = Mathf.Max(dashCooldown, dashCooldownX);
+            dashImpulse.x = Mathf.Sign(dashInputRaw.x) * dashForceX;
+        }
+
+        if (hasVertical)
+        {
+            dashDuration = Mathf.Max(dashDuration, dashDurationY);
+            dashCooldown = Mathf.Max(dashCooldown, dashCooldownY);
+            dashImpulse.y = Mathf.Sign(dashInputRaw.y) * dashForceY;
+        }
+
+        if (dashDuration <= 0f) dashDuration = 0.0001f;
+        if (dashCooldown <= 0f) dashCooldown = Mathf.Max(dashCooldownX, dashCooldownY);
 
         dashTimer = dashDuration;
+        currentDashDuration = dashDuration;
         dashCooldownTimer = dashCooldown;
 
-        // 计算冲刺方向
-        if (inputDir.magnitude > 0.1f)
-            dashDirection = new Vector3(inputDir.x, inputDir.y, 0f).normalized;
-        else
-            dashDirection = transform.right * (transform.rotation.eulerAngles.y == 180 ? -1f : 1f);
-
-        // 冲刺瞬间添加脉冲力
-        rb.linearVelocity += dashDirection * dashForce;
+        // 冲刺瞬间添加脉冲力（横纵分量叠加）
+        rb.linearVelocity += dashImpulse;
 
         // 生成特效
         SpawnDashEffect();
@@ -184,17 +228,16 @@ public class PlayerUnderwaterController : MonoBehaviour
 
     void SpawnDashEffect()
     {
-        if (dashIsVertical && dashEffectVertical != null)
+        Vector3 spawnPos = effectSpawnPoint ? effectSpawnPoint.position : transform.position;
+
+        if (dashHasVerticalInput && dashEffectVertical != null)
         {
-            Instantiate(dashEffectVertical,
-                effectSpawnPoint ? effectSpawnPoint.position : transform.position,
-                Quaternion.identity);
+            Instantiate(dashEffectVertical, spawnPos, Quaternion.identity);
         }
-        else if (!dashIsVertical && dashEffectHorizontal != null)
+
+        if (dashHasHorizontalInput && dashEffectHorizontal != null)
         {
-            Instantiate(dashEffectHorizontal,
-                effectSpawnPoint ? effectSpawnPoint.position : transform.position,
-                Quaternion.identity);
+            Instantiate(dashEffectHorizontal, spawnPos, Quaternion.identity);
         }
     }
 
@@ -206,13 +249,18 @@ public class PlayerUnderwaterController : MonoBehaviour
         if (isDashing)
         {
             dashTimer -= Time.deltaTime;
-            float totalDuration = dashIsVertical ? dashDurationY : dashDurationX;
+            float totalDuration = Mathf.Max(currentDashDuration, 1e-4f);
             float t = 1f - (dashTimer / totalDuration);
             float ease = dashEase.Evaluate(t);
             rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, targetVelocity, ease * Time.deltaTime * 5f);
 
             if (dashTimer <= 0f)
+            {
                 isDashing = false;
+                dashOrientation = DashOrientation.None;
+                dashHasHorizontalInput = false;
+                dashHasVerticalInput = false;
+            }
         }
     }
 
@@ -252,7 +300,7 @@ public class PlayerUnderwaterController : MonoBehaviour
         GUI.Label(new Rect(debugUIPos.x, baseY + 110, 250, 20), $"冲刺状态: {dashState}");
         if (isDashing)
             GUI.Label(new Rect(debugUIPos.x, baseY + 130, 250, 20),
-                $"方向: {(dashIsVertical ? "垂直WS 🧭" : "水平AD 🧭")}");
+                $"方向: {GetDashOrientationText()}");
 
         float barWidth = 200f;
         float ratio = Mathf.Clamp01(Mathf.Abs(deltaH) / rangeJ);
@@ -280,6 +328,21 @@ public class PlayerUnderwaterController : MonoBehaviour
         else
         {
             return "静止中";
+        }
+    }
+
+    string GetDashOrientationText()
+    {
+        switch (dashOrientation)
+        {
+            case DashOrientation.Vertical:
+                return "垂直WS 🧭";
+            case DashOrientation.Horizontal:
+                return "水平AD 🧭";
+            case DashOrientation.Diagonal:
+                return "斜向组合 🧭";
+            default:
+                return "未输入";
         }
     }
 

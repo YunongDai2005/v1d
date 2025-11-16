@@ -3,23 +3,26 @@
 [RequireComponent(typeof(Collider))]
 public class ExpPickup : MonoBehaviour
 {
-    [Header("拾取参数")]
+    [Header("??????")]
     public float addMass = 0.1f;
-    public float moveSpeed = 2f;         // 飘动速度
-    public float floatAmplitude = 0.2f;  // 上下浮动幅度
-    public float floatFrequency = 1.5f;  // 上下浮动频率
+    public float moveSpeed = 2f;         // ??????
+    public float floatAmplitude = 0.2f;  // ???????????
+    public float floatFrequency = 1.5f;  // ??????????
+    public bool enableMagnet = true;     // Toggle attraction to the player
+    public float spinSpeed = 90f;        // Degrees per second for spinning
+    public Vector3 spinAxis = Vector3.up;
 
     private Transform player;
-    private PlayerUnderwaterController controller;
     private Vector3 basePos;
+    private float floatPhaseOffset;
 
     void Start()
     {
-        // 自动设置触发体
+        // ????????????
         Collider col = GetComponent<Collider>();
         col.isTrigger = true;
 
-        // 确保有刚体
+        // ????��???
         if (GetComponent<Rigidbody>() == null)
         {
             Rigidbody rb = gameObject.AddComponent<Rigidbody>();
@@ -27,29 +30,30 @@ public class ExpPickup : MonoBehaviour
         }
 
         basePos = transform.position;
+        floatPhaseOffset = Random.Range(0f, Mathf.PI * 2f);   // Unsynced float
 
-        // 找到玩家
+        // ??????
         GameObject p = GameObject.FindGameObjectWithTag("Player");
         if (p != null)
         {
             player = p.transform;
-            controller = p.GetComponent<PlayerUnderwaterController>();
         }
     }
 
     void Update()
     {
-        if (player == null || controller == null) return;
+        Vector3 target = basePos;
 
-        // ✅ 目标位置：玩家当前水平位置 + 玩家目标深度的 y
-        Vector3 target = new Vector3(player.position.x, controller.targetH, transform.position.z);
+        if (enableMagnet && player != null)
+        {
+            target = player.position;
+        }
 
-        // 平滑飘向目标位置
-        transform.position = Vector3.Lerp(transform.position, target, Time.deltaTime * moveSpeed);
+        Vector3 floatOffset = Vector3.up * Mathf.Sin(Time.time * floatFrequency + floatPhaseOffset) * floatAmplitude;
+        Vector3 nextPosition = Vector3.Lerp(transform.position, target + floatOffset, Time.deltaTime * moveSpeed);
 
-        // 增加轻微上下浮动效果
-        float offset = Mathf.Sin(Time.time * floatFrequency) * floatAmplitude;
-        transform.position += new Vector3(0, offset * Time.deltaTime, 0);
+        transform.position = nextPosition;
+        ApplySpin();
     }
 
     private void OnTriggerEnter(Collider other)
@@ -60,10 +64,20 @@ public class ExpPickup : MonoBehaviour
             if (playerCtrl != null)
             {
                 playerCtrl.totalMass += addMass;
-                Debug.Log($"✅ 玩家拾取经验球，总质量变为 {playerCtrl.totalMass}");
+                Debug.Log($"? ???????????????????? {playerCtrl.totalMass}");
             }
 
             Destroy(gameObject);
         }
+    }
+
+    private void ApplySpin()
+    {
+        if (spinSpeed == 0f || spinAxis == Vector3.zero)
+        {
+            return;
+        }
+
+        transform.Rotate(spinAxis.normalized * spinSpeed * Time.deltaTime, Space.World);
     }
 }
