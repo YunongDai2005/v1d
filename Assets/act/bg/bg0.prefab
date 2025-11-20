@@ -67,7 +67,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 798ac03ccfb433f40af0f0bf3147af4c, type: 2}
+  - {fileID: 2100000, guid: a41fd5eea9f293042b7c360a94e74da1, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -144,5 +144,5 @@ MonoBehaviour:
   playerTag: Player
   spawnPrefab: {fileID: 8160773350129249496, guid: 33a287cc0473c674bba24ff387b1a404, type: 3}
   alignTolerance: 10
-  offsetX: 100
+  offsetX: 50
   triggerOnce: 1
