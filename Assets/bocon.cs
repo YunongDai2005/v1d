@@ -45,6 +45,7 @@ public class bocon : MonoBehaviour
     [SerializeField, Min(0f)] private float extremeBand = 35f;
     [SerializeField, Min(0f)] private float onIntensity = 400000f;
     [SerializeField] private DepthLight[] depthLights = new DepthLight[LightCount];
+    [SerializeField] private DepthLight[] depthLightsGroup2 = new DepthLight[LightCount];
 
     private void Reset()
     {
@@ -55,6 +56,12 @@ public class bocon : MonoBehaviour
         {
             depthLights[i].overridePosition = true;
             depthLights[i].localPosition = new Vector3(i * spacing, 0f, 0f);
+        }
+
+        for (int i = 0; i < depthLightsGroup2.Length; i++)
+        {
+            depthLightsGroup2[i].overridePosition = true;
+            depthLightsGroup2[i].localPosition = new Vector3(i * spacing, 0f, 0f);
         }
     }
 
@@ -101,7 +108,7 @@ public class bocon : MonoBehaviour
 
         ValidateBands();
 
-        int centerIndex = depthLights.Length / 2;
+        int centerIndex = LightCount / 2;
         int activeIndex = centerIndex;
 
         float absOffset = Mathf.Abs(offset);
@@ -119,43 +126,71 @@ public class bocon : MonoBehaviour
         }
         else if (offset <= -extremeBand)
         {
-            activeIndex = depthLights.Length - 1; // lowest
+            activeIndex = LightCount - 1; // lowest
         }
         else if (offset <= -moderateBand)
         {
-            activeIndex = depthLights.Length - 2; // second lowest
+            activeIndex = LightCount - 2; // second lowest
         }
         else
         {
             activeIndex = centerIndex;
         }
 
-        for (int i = 0; i < depthLights.Length; i++)
+        for (int i = 0; i < LightCount; i++)
         {
-            depthLights[i].ApplyPosition(transform);
             bool shouldBeOn = i == activeIndex;
-            depthLights[i].ApplyVisuals(shouldBeOn, onIntensity);
+
+            if (depthLights != null && i < depthLights.Length && depthLights[i] != null)
+            {
+                depthLights[i].ApplyPosition(transform);
+                depthLights[i].ApplyVisuals(shouldBeOn, onIntensity);
+            }
+
+            if (depthLightsGroup2 != null && i < depthLightsGroup2.Length && depthLightsGroup2[i] != null)
+            {
+                depthLightsGroup2[i].ApplyPosition(transform);
+                depthLightsGroup2[i].ApplyVisuals(shouldBeOn, onIntensity);
+            }
         }
     }
 
     private void OnDrawGizmosSelected()
     {
-        if (depthLights == null) return;
+        if (depthLights == null && depthLightsGroup2 == null) return;
 
         Gizmos.color = Color.cyan;
-        for (int i = 0; i < depthLights.Length; i++)
+        for (int i = 0; i < LightCount; i++)
         {
-            Vector3 position = transform.position;
-            if (depthLights[i].overridePosition)
+            if (depthLights != null && i < depthLights.Length && depthLights[i] != null)
             {
-                position = transform.TransformPoint(depthLights[i].localPosition);
-            }
-            else if (depthLights[i].light != null)
-            {
-                position = depthLights[i].light.transform.position;
+                Vector3 position = transform.position;
+                if (depthLights[i].overridePosition)
+                {
+                    position = transform.TransformPoint(depthLights[i].localPosition);
+                }
+                else if (depthLights[i].light != null)
+                {
+                    position = depthLights[i].light.transform.position;
+                }
+
+                Gizmos.DrawWireSphere(position, 0.1f);
             }
 
-            Gizmos.DrawWireSphere(position, 0.1f);
+            if (depthLightsGroup2 != null && i < depthLightsGroup2.Length && depthLightsGroup2[i] != null)
+            {
+                Vector3 position2 = transform.position;
+                if (depthLightsGroup2[i].overridePosition)
+                {
+                    position2 = transform.TransformPoint(depthLightsGroup2[i].localPosition);
+                }
+                else if (depthLightsGroup2[i].light != null)
+                {
+                    position2 = depthLightsGroup2[i].light.transform.position;
+                }
+
+                Gizmos.DrawWireSphere(position2, 0.1f);
+            }
         }
     }
 
@@ -173,6 +208,19 @@ public class bocon : MonoBehaviour
         }
 
         depthLights = newLights;
+
+        if (depthLightsGroup2 == null || depthLightsGroup2.Length != LightCount)
+        {
+            DepthLight[] newGroup2 = new DepthLight[LightCount];
+            if (depthLightsGroup2 != null)
+            {
+                for (int i = 0; i < Mathf.Min(depthLightsGroup2.Length, LightCount); i++)
+                {
+                    newGroup2[i] = depthLightsGroup2[i];
+                }
+            }
+            depthLightsGroup2 = newGroup2;
+        }
     }
 
     private void ValidateBands()

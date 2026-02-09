@@ -28,12 +28,18 @@ public class RadarPulse : MonoBehaviour
     public AnimationCurve pingFadeCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
     public string mapLayerName = "map";
 
+    [Header("Audio")]
+    public bool playSweepTick = true;
+    public float sweepTickInterval = 0.6f;
+    public bool playDetectionPing = true;
+
     private readonly Dictionary<Transform, float> _lastHits = new Dictionary<Transform, float>();
     private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
     private MaterialPropertyBlock _propertyBlock;
     private float _scanAngle;
     private int _mapLayerId = -2;
     private Material _scanLineMaterial;
+    private float _sweepTickTimer;
 
     void Awake()
     {
@@ -50,6 +56,7 @@ public class RadarPulse : MonoBehaviour
     {
         AnimatePulse();
         UpdateScanLine();
+        UpdateSweepAudio();
         PerformScan();
     }
 
@@ -102,8 +109,23 @@ public class RadarPulse : MonoBehaviour
             if (Time.time - lastHit < hitCooldown) return;
 
             SpawnPing(hit.point);
+            if (playDetectionPing)
+            {
+                AudioManager.PlayWarning();
+            }
             _lastHits[target] = Time.time;
         }
+    }
+
+    private void UpdateSweepAudio()
+    {
+        if (!playSweepTick) return;
+
+        _sweepTickTimer -= Time.deltaTime;
+        if (_sweepTickTimer > 0f) return;
+
+        _sweepTickTimer = Mathf.Max(0.05f, sweepTickInterval);
+        AudioManager.PlayWarning();
     }
 
     private LineRenderer CreateScanLine()

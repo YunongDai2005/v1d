@@ -67,6 +67,8 @@ public class ExpPickup : MonoBehaviour
                 Debug.Log($"? ???????????????????? {playerCtrl.totalMass}");
             }
 
+            CoinContainerDisplay.AddCoinsGlobal(1);
+            AudioManager.PlayPickup();
             Destroy(gameObject);
         }
     }

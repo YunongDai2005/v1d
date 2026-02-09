@@ -16,7 +16,7 @@ public class EnemyHealth : MonoBehaviour
         currentHealth -= amount;
         currentHealth = Mathf.Max(currentHealth, 0f);
 
-        Debug.Log($"{gameObject.name} 被击中 -{amount}，剩余血量：{currentHealth}");
+        Debug.Log($"{gameObject.name} took {amount} damage. HP left: {currentHealth}");
 
         if (currentHealth <= 0)
         {
@@ -26,7 +26,9 @@ public class EnemyHealth : MonoBehaviour
 
     void Die()
     {
-        Debug.Log($"{gameObject.name} 死亡！");
+        Debug.Log($"{gameObject.name} died.");
+        AudioManager.PlayEnemyDead();
+        ComboRankSystem.RegisterKillGlobal();
         Destroy(gameObject);
     }
 }

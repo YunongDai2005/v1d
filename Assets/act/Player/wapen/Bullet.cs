@@ -54,6 +54,7 @@ public class Bullet : MonoBehaviour
             if (enemy != null)
             {
                 enemy.TakeDamage(damage);
+                AudioManager.PlayHit();
             }
 
             Destroy(gameObject); // 击中销毁

@@ -36,7 +36,7 @@ public class EnemyAI : MonoBehaviour
             if (p != null)
                 player = p.transform;
             else
-                Debug.LogWarning("⚠️ 没找到玩家，请确认 Tag 为 Player");
+                Debug.LogWarning("Player not found. Make sure the player object has tag 'Player'.");
         }
     }
 

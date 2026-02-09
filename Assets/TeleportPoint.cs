@@ -1,114 +1,173 @@
-using UnityEngine;
 using System.Collections;
-using UnityEngine.UI;
+using System.Collections.Generic;
+using UnityEngine;
 
-/// <summary>
-/// 传送点与交互逻辑
-/// - 玩家进入范围显示提示，按键交互传送
-/// - 支持控制器切换：PlayerUnderwaterController 与 playercon
-/// - 支持刷怪开关（可指定需要控制的 EnemySpawner 列表）
-/// </summary>
-[RequireComponent(typeof(Collider))]
 public class TeleportPoint : MonoBehaviour
 {
-    [Header("➡ 传送目标设置")]
-    [Tooltip("目标位置（传送到该点）")]
+    [Header("Quick Target")]
+    [Tooltip("If targetPoint is empty, auto-find by this scene object name.")]
+    public string targetPointName = "lv1-0";
+
+    [Header("Target")]
+    [Tooltip("Shop destination transform.")]
     public Transform targetPoint;
+    [Tooltip("World-space offset added to target point.")]
+    public Vector3 positionOffset = Vector3.zero;
 
-    [Tooltip("传送到目标时的偏移 (世界坐标方向)")]
-    public Vector3 positionOffset = new Vector3(0, 0, 0);
-
-    [Tooltip("交互按键")]
+    [Header("Input")]
     public KeyCode interactKey = KeyCode.E;
+    [Min(0f)] public float cooldown = 0.25f;
+    public string playerTag = "Player";
 
-    [Tooltip("传送冷却时间 (秒)")]
-    public float cooldown = 5f;
-
-    [Header("🎚 控制器切换")]
-    [Tooltip("为 true 时：禁用 PlayerUnderwaterController，启用 playercon；为 false 时反之")]
+    [Header("Controller Switch In Shop")]
+    [Tooltip("True: disable PlayerUnderwaterController and enable playercon in shop mode.")]
     public bool usePccController = false;
 
-    [Header("👹 刷怪控制")]
-    [Tooltip("指定需要启用/禁用的刷怪器（为空则尝试自动查找活动的 EnemySpawner）")]
+    [Header("Spawner Control")]
+    [Tooltip("Optional explicit spawners to toggle.")]
     public EnemySpawner[] spawnersToToggle;
 
-    [Header("🪧 UI 提示")]
-    public GameObject interactPromptUI; // 可选：提示面板（Canvas 下的对象）
-    public string promptText = "按 [E] 传送";
+    [Header("Pause World In Shop")]
+    [Tooltip("Disable everything except the player while inside the shop.")]
+    public bool pauseNonPlayerWhileInShop = true;
+    public bool freezeNonPlayerRigidbodies = true;
 
-    [Header("📏 交互范围 (可配置)")]
-    [Tooltip("是否使用单独的 SphereCollider 作为交互触发范围")]
-    public bool useDedicatedTrigger = true;
-    [Tooltip("交互半径 (仅对 SphereCollider 生效)")]
-    public float interactRadius = 2f;
-
-    [Header("🛠 调试显示")]
+    [Header("Debug")]
     public bool showDebugGizmos = true;
     public Color gizmoColor = new Color(0f, 0.8f, 1f, 0.5f);
 
-    private bool isPlayerNearby = false;
-    private bool onCooldown = false;
+    private bool onCooldown;
+    private bool inShopMode;
     private Transform player;
-    private Vector3 lastPositionBeforeTeleport;
+    private Vector3 returnPosition;
+    private Quaternion returnRotation;
+    private bool cachedUwEnabled;
+    private bool cachedPccEnabled;
+    private bool hasCachedControllerState;
 
-    void Start()
+    private readonly List<Behaviour> pausedBehaviours = new List<Behaviour>();
+    private readonly List<Rigidbody> pausedRigidbodies = new List<Rigidbody>();
+    private readonly List<bool> rbKinematicBackup = new List<bool>();
+    private readonly List<Vector3> rbVelBackup = new List<Vector3>();
+    private readonly List<Vector3> rbAngBackup = new List<Vector3>();
+    private static TeleportPoint hotkeyOwner;
+
+    void OnEnable()
     {
-        if (interactPromptUI != null)
-            interactPromptUI.SetActive(false);
+        if (hotkeyOwner == null) hotkeyOwner = this;
+    }
 
-        if (useDedicatedTrigger)
+    void OnDisable()
+    {
+        if (hotkeyOwner == this) hotkeyOwner = null;
+        if (inShopMode)
         {
-            // 使用/配置 SphereCollider 作为交互范围，不影响其他碰撞体
-            var sc = GetComponent<SphereCollider>();
-            if (sc == null) sc = gameObject.AddComponent<SphereCollider>();
-            sc.isTrigger = true;
-            sc.radius = Mathf.Max(0.01f, interactRadius);
-        }
-        else
-        {
-            // 回退方案：将当前碰撞体设为触发器
-            Collider col = GetComponent<Collider>();
-            if (col != null) col.isTrigger = true;
+            ResumeNonPlayerWorld();
+            inShopMode = false;
         }
     }
 
     void Update()
     {
-        if (!isPlayerNearby || onCooldown) return;
+        // Only one TeleportPoint handles global E input to avoid double toggles.
+        if (hotkeyOwner != this) return;
 
-        if (Input.GetKeyDown(interactKey))
+        if (onCooldown) return;
+        if (!Input.GetKeyDown(interactKey)) return;
+
+        if (IsMenuOpen()) return;
+        if (!EnsurePlayer()) return;
+        EnsureTargetPoint();
+        if (targetPoint == null)
         {
-            StartCoroutine(DoTeleport());
+            Debug.LogWarning("TeleportPoint: targetPoint is not set.");
+            return;
         }
+
+        StartCoroutine(ToggleShopModeRoutine());
     }
 
-    private IEnumerator DoTeleport()
+    private IEnumerator ToggleShopModeRoutine()
     {
         onCooldown = true;
-        if (interactPromptUI != null) interactPromptUI.SetActive(false);
 
-        if (player == null || targetPoint == null)
+        if (!inShopMode)
         {
-            Debug.LogWarning("TeleportPoint: 缺少 player 或 targetPoint");
-            yield break;
+            EnterShopMode();
+        }
+        else
+        {
+            ExitShopMode();
         }
 
-        // 控制器切换
-        ApplyControllerMode(usePccController);
-
-        // 记录上次位置（如果需要实现返回功能）
-        lastPositionBeforeTeleport = player.position;
-
-        // 执行传送
-        Vector3 targetPos = targetPoint.position + positionOffset;
-        player.position = targetPos;
-
-        // 刷怪开关：true 关闭刷怪，false 开启刷怪
-        SetSpawnerEnabled(!usePccController);
-
-        // 冷却
+        AudioManager.PlayTeleport();
         yield return new WaitForSeconds(cooldown);
         onCooldown = false;
+    }
+
+    private void EnterShopMode()
+    {
+        if (player == null) return;
+
+        CacheControllerState();
+        returnPosition = player.position;
+        returnRotation = player.rotation;
+        player.position = targetPoint.position + positionOffset;
+
+        ApplyControllerMode(usePccController);
+        SetSpawnerEnabled(false);
+
+        if (pauseNonPlayerWhileInShop)
+        {
+            PauseNonPlayerWorld();
+        }
+
+        inShopMode = true;
+    }
+
+    private void ExitShopMode()
+    {
+        if (player == null) return;
+
+        player.position = returnPosition;
+        player.rotation = returnRotation;
+
+        RestoreControllerState();
+        SetSpawnerEnabled(true);
+
+        if (pauseNonPlayerWhileInShop)
+        {
+            ResumeNonPlayerWorld();
+        }
+
+        inShopMode = false;
+    }
+
+    private bool EnsurePlayer()
+    {
+        if (player != null) return true;
+        GameObject go = GameObject.FindGameObjectWithTag(playerTag);
+        if (go == null) return false;
+        player = go.transform;
+        return true;
+    }
+
+    private void EnsureTargetPoint()
+    {
+        if (targetPoint != null) return;
+        if (string.IsNullOrWhiteSpace(targetPointName)) return;
+        GameObject go = GameObject.Find(targetPointName);
+        if (go != null) targetPoint = go.transform;
+    }
+
+    private void CacheControllerState()
+    {
+        if (player == null || hasCachedControllerState) return;
+        var uw = player.GetComponent<PlayerUnderwaterController>();
+        var pcc = player.GetComponent<playercon>();
+        cachedUwEnabled = uw != null && uw.enabled;
+        cachedPccEnabled = pcc != null && pcc.enabled;
+        hasCachedControllerState = true;
     }
 
     private void ApplyControllerMode(bool usePcc)
@@ -122,73 +181,127 @@ public class TeleportPoint : MonoBehaviour
         {
             if (uw != null) uw.enabled = false;
             if (pcc != null) pcc.enabled = true;
-            if (uw == null)
-                Debug.Log("[TeleportPoint] PlayerUnderwaterController 未找到，已跳过禁用。");
-            if (pcc == null)
-                Debug.Log("[TeleportPoint] playercon 未找到，无法启用 Pcc 控制器。");
         }
         else
         {
             if (uw != null) uw.enabled = true;
             if (pcc != null) pcc.enabled = false;
-            if (uw == null)
-                Debug.Log("[TeleportPoint] PlayerUnderwaterController 未找到，无法启用水下控制器。");
-            if (pcc == null)
-                Debug.Log("[TeleportPoint] playercon 未找到，已跳过禁用。");
         }
+    }
+
+    private void RestoreControllerState()
+    {
+        if (player == null || !hasCachedControllerState) return;
+        var uw = player.GetComponent<PlayerUnderwaterController>();
+        var pcc = player.GetComponent<playercon>();
+        if (uw != null) uw.enabled = cachedUwEnabled;
+        if (pcc != null) pcc.enabled = cachedPccEnabled;
+        hasCachedControllerState = false;
     }
 
     private void SetSpawnerEnabled(bool enabled)
     {
         if (spawnersToToggle != null && spawnersToToggle.Length > 0)
         {
-            foreach (var s in spawnersToToggle)
+            for (int i = 0; i < spawnersToToggle.Length; i++)
             {
-                if (s != null) s.enabled = enabled;
+                if (spawnersToToggle[i] != null) spawnersToToggle[i].enabled = enabled;
             }
             return;
         }
 
-        // 回退：自动查找当前场景中的活动刷怪器（无法找到已禁用组件）
-        var found = Object.FindObjectsOfType<EnemySpawner>();
-        foreach (var s in found)
+        var found = Object.FindObjectsOfType<EnemySpawner>(true);
+        for (int i = 0; i < found.Length; i++)
         {
-            if (s != null) s.enabled = enabled;
+            if (found[i] != null) found[i].enabled = enabled;
         }
     }
 
-    private void OnTriggerEnter(Collider other)
+    private void PauseNonPlayerWorld()
     {
-        if (other.CompareTag("Player"))
-        {
-            isPlayerNearby = true;
-            player = other.transform;
+        pausedBehaviours.Clear();
+        pausedRigidbodies.Clear();
+        rbKinematicBackup.Clear();
+        rbVelBackup.Clear();
+        rbAngBackup.Clear();
 
-            if (interactPromptUI != null)
-            {
-                interactPromptUI.SetActive(true);
-                // 自动填充 UI.Text 的内容（如有）
-                var uiText = interactPromptUI.GetComponentInChildren<Text>(true);
-                if (uiText != null)
-                {
-                    uiText.text = promptText;
-                }
-            }
-            else
-            {
-                Debug.Log($"提示: {promptText}");
-            }
+        MonoBehaviour[] allBehaviours = Object.FindObjectsOfType<MonoBehaviour>(true);
+        for (int i = 0; i < allBehaviours.Length; i++)
+        {
+            MonoBehaviour mb = allBehaviours[i];
+            if (mb == null || !mb.enabled) continue;
+            if (mb == this) continue;
+            if (ShouldKeepActiveInShop(mb)) continue;
+            if (IsPlayerObject(mb.gameObject)) continue;
+            mb.enabled = false;
+            pausedBehaviours.Add(mb);
+        }
+
+        if (!freezeNonPlayerRigidbodies) return;
+
+        Rigidbody[] allBodies = Object.FindObjectsOfType<Rigidbody>(true);
+        for (int i = 0; i < allBodies.Length; i++)
+        {
+            Rigidbody rb = allBodies[i];
+            if (rb == null) continue;
+            if (IsPlayerObject(rb.gameObject)) continue;
+            pausedRigidbodies.Add(rb);
+            rbKinematicBackup.Add(rb.isKinematic);
+            rbVelBackup.Add(rb.linearVelocity);
+            rbAngBackup.Add(rb.angularVelocity);
+            rb.isKinematic = true;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
         }
     }
 
-    private void OnTriggerExit(Collider other)
+    private void ResumeNonPlayerWorld()
     {
-        if (other.CompareTag("Player"))
+        for (int i = 0; i < pausedBehaviours.Count; i++)
         {
-            isPlayerNearby = false;
-            if (interactPromptUI != null)
-                interactPromptUI.SetActive(false);
+            if (pausedBehaviours[i] != null) pausedBehaviours[i].enabled = true;
         }
+        pausedBehaviours.Clear();
+
+        for (int i = 0; i < pausedRigidbodies.Count; i++)
+        {
+            Rigidbody rb = pausedRigidbodies[i];
+            if (rb == null) continue;
+            rb.isKinematic = rbKinematicBackup[i];
+            rb.linearVelocity = rbVelBackup[i];
+            rb.angularVelocity = rbAngBackup[i];
+        }
+        pausedRigidbodies.Clear();
+        rbKinematicBackup.Clear();
+        rbVelBackup.Clear();
+        rbAngBackup.Clear();
+    }
+
+    private bool IsPlayerObject(GameObject go)
+    {
+        if (go == null || player == null) return false;
+        Transform t = go.transform;
+        return t == player || t.IsChildOf(player);
+    }
+
+    private bool ShouldKeepActiveInShop(Behaviour behaviour)
+    {
+        if (behaviour == null) return false;
+        GameObject go = behaviour.gameObject;
+        if (go == null) return false;
+        if (behaviour is CameraDepthFollow) return true;
+        System.Type type = behaviour.GetType();
+        if (type.Namespace != null && type.Namespace.Contains("Cinemachine")) return true;
+        if (go.GetComponent<Camera>() != null) return true;
+        if (go.GetComponent<UnityEngine.EventSystems.EventSystem>() != null) return true;
+        if (go.GetComponentInParent<Camera>() != null) return true;
+        return false;
+    }
+
+    private bool IsMenuOpen()
+    {
+        MainMenuOverlay menu = Object.FindObjectOfType<MainMenuOverlay>(true);
+        return menu != null && menu.IsMenuOpen;
     }
 
     private void OnDrawGizmos()
@@ -199,6 +312,5 @@ public class TeleportPoint : MonoBehaviour
         Vector3 targetPos = targetPoint.position + positionOffset;
         Gizmos.DrawLine(transform.position, targetPos);
         Gizmos.DrawSphere(targetPos, 0.2f);
-        Gizmos.DrawWireSphere(transform.position, 0.3f);
     }
 }

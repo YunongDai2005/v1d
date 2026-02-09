@@ -15,7 +15,9 @@ public class AutoShooter : MonoBehaviour
     void Update()
     {
         timer += Time.deltaTime;
-        if (timer >= shootInterval)
+        float attackSpeedMult = ComboRankSystem.GetAttackSpeedMultiplierGlobal();
+        float currentInterval = shootInterval / Mathf.Max(0.1f, attackSpeedMult);
+        if (timer >= currentInterval)
         {
             timer = 0f;
             ShootAtClosestEnemy();
@@ -58,6 +60,8 @@ public class AutoShooter : MonoBehaviour
             b.damage = bulletDamage;
             b.speed = bulletSpeed;
         }
+
+        AudioManager.PlayShoot();
     }
     void OnDrawGizmosSelected()
     {
